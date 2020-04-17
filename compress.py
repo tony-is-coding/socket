@@ -25,11 +25,12 @@ class ZlibCompress(BaseCompress):
 
     def compress(self, data: ByteString) -> ByteString:
         super().compress(data)
-        # need do more
-
         return zlib.compress(data, level=self.compress_level)
 
     def decompress(self, data: ByteString) -> ByteString:
         super().decompress(data)
         # need do more thing
         return zlib.decompress(data)
+
+
+default_compress = ZlibCompress()
