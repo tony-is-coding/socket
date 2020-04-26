@@ -92,7 +92,7 @@ class DefaultReader(BaseReader):
         # 做到这里, 有一种要走到 http 的感观, 所以: 是否可以交给使用者自己去定制parser? yes it's OK ！！！
         # 随意、宽泛、自定义 自己定义任何协议, 自己封装请求体
         # return self._parser.decode(bytes_data=bytes_data)
-        return BaseRequest()  # FIXME fix this error
+        return BaseRequest()
 
     def __deal_data(self, request: BaseRequest) -> ByteString:
         # handler logic
@@ -138,7 +138,6 @@ class Server:
 
     def __read(self, conn):
         data = self._reader(conn=conn)
-        # TODO: no data is error occurred
         if data:
             writer = partial(self.__write, send_data=data)
             self._selector.unregister(conn)
@@ -160,11 +159,14 @@ class Server:
             #     a += i
             print(f"number: {self._count} " + " ====  echo `", send_data, "`to", conn.getpeername())
 
+            # TODO: 发送响应包优化
+            # FIXME: 优化后头协议如何处理 可以交给tstpq处理
             # conn.send(self._compress.compress(data=send_data + EOF.encode("utf-8")))
             conn.send(send_data + EOF.encode("utf-8"))
+            self._writer(conn, send_data)
             self._selector.unregister(conn)
             self._selector.register(conn, selectors.EVENT_READ, self.__read)  # 重复依赖会有bug 的可能性
-            # conn.close() # TODO: 是否关闭连接
+            # conn.close()
 
     def __accept(self, sock):
         conn, addr = sock.accept()
