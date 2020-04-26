@@ -20,9 +20,9 @@ class Server:
     """
 
     def __init__(self,
-                 reader: BaseReader,
-                 writer: BaseWriter,
-                 handler: BaseHandler,
+                 reader: BaseReader = None,
+                 writer: BaseWriter = None,
+                 handler: BaseHandler = None,
                  compress: BaseCompress = default_compress,
                  selector=None,
                  port=None,
@@ -45,10 +45,11 @@ class Server:
         # check the same compression
         if not isinstance(self._writer.compress, type(self._reader.compress)):
             raise TypeError(
-                f"except the same compression class but got {self._reader.compress)} and {type(self._writer.compress)}")
+                f"except the same compression class but got {type(self._reader.compress)} and"
+                f" {type(self._writer.compress)}")
 
         # handler
-        self._handler = DefaultHandler()
+        self._handler = handler if handler is not None else DefaultHandler()
 
         # server_count
         self._count = 0

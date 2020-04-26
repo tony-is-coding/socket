@@ -97,7 +97,10 @@ class DefaultReader(BaseReader):
             except ConnectionResetError:  # register connect was closed by peer
                 pass
         if data:
-            request.set_body(self.compress.decompress(data))
+            print(data)
+            if self.compress is not None:
+                data = self.compress.decompress(data)
+            request.set_body(data)
         # body default is None
         return request.body(), request
 
@@ -109,7 +112,10 @@ class DefaultWriter(BaseWriter):
 
     def __call__(self, conn, handler: BaseHandler, request: BaseRequest):
         resp = handler(request)
-        send_body = self.compress.compress(resp.body())  # type: bytes  # noqa
+        send_body = resp.body()
+        if self.compress is not None:
+            pass
+            send_body = self.compress.compress(send_body)  # type: bytes  # noqa
         send_header = struct.pack("I", len(send_body))
         conn.send(send_header + send_body)
 
