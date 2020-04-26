@@ -2,119 +2,33 @@ import socket
 import selectors
 from functools import partial
 from threading import RLock
-from abc import ABCMeta, abstractmethod
-from typing import ByteString, NamedTuple, Union, AnyStr, List, Dict, Tuple, Set
-import struct
+from typing import ByteString
 
-from compress import default_compress
+from base import BaseWriter, BaseReader, BaseRequest
+from compress import BaseCompress, default_compress
+from default import DefaultReader, DefaultWriter
 
 EOF = "\r\n\r\n"
-PyObject = Union[Set, Tuple, List, Dict, AnyStr, int]
-
-
-class BaseRequest(NamedTuple):
-    pass
-
-
-class DefaultRequest(BaseRequest):
-    data: str
-    keep_alive: int
-
-
-class BaseParser(metaclass=ABCMeta):
-    @abstractmethod
-    def decode(self, bytes_data: ByteString) -> PyObject:
-        pass
-
-    @abstractmethod
-    def encode(self, data: PyObject) -> ByteString:
-        pass
-
-
-class BaseWriter(metaclass=ABCMeta):
-
-    @abstractmethod
-    def __call__(self, *args, **kwargs):
-        pass
-
-
-class BaseReader(metaclass=ABCMeta):
-
-    @abstractmethod
-    def __call__(self, *args, **kwargs):
-        pass
-
-
-class DefaultWriter(BaseWriter):
-
-    def __call__(self, conn, send_data=None):
-        pass
-
-
-class DefaultReader(BaseReader):
-
-    def __init__(self, parser: BaseParser = None, request: BaseRequest = None):
-        self._parser = parser
-        self._request = request
-        self._buffer_size = 256
-
-    def __call__(self, conn) -> ByteString:
-        print(f"read from {conn}")
-        data = b''
-        while True:
-            try:
-                d = conn.recv(4)
-                if not d:
-                    break
-                cl = struct.unpack('I', d)[0]
-                while cl > 0:
-                    if cl > self._buffer_size:
-                        d = conn.recv(self._buffer_size)
-                        data += d
-                        cl -= self._buffer_size
-                    else:
-                        d = conn.recv(cl)
-                        data += d
-                        cl = 0
-                break
-            except BlockingIOError:  # 非阻塞socket调用了 阻塞的方法
-                pass
-            except ConnectionResetError:  # 注册事件的socket 断开了连接
-                pass
-        if data:
-            print(data.decode("utf-8"))
-            parser_data = self.__parser(data)
-            return self.__deal_data(parser_data)
-        else:
-            return b''
-
-    def __parser(self, bytes_data: ByteString) -> BaseRequest:
-        # 做到这里, 有一种要走到 http 的感观, 所以: 是否可以交给使用者自己去定制parser? yes it's OK ！！！
-        # 随意、宽泛、自定义 自己定义任何协议, 自己封装请求体
-        # return self._parser.decode(bytes_data=bytes_data)
-        return BaseRequest()
-
-    def __deal_data(self, request: BaseRequest) -> ByteString:
-        # handler logic
-        return b'has received data'
 
 
 class Server:
+    """
+    # Running a example
+    >>> from server import Server
+    >>> server = Server()
+    >>> server.run()
+    """
 
     def __init__(self,
-                 reader: BaseReader,  # type
+                 reader: BaseReader,
                  writer: BaseWriter,
+                 compress: BaseCompress = default_compress,
                  selector=None,
                  port=None,
                  host=None,
                  sock=None,
-                 compress=None
                  ):
-
-        # bit compression
         self._compress = compress
-        if self._compress is None:
-            self._compress = default_compress
 
         # i/o multiple selector
         self._selector = selector
@@ -122,51 +36,50 @@ class Server:
             self._selector = selectors.DefaultSelector()
 
         # read monitor
-        self._reader = reader
+        self._reader = reader if reader is not None else DefaultReader(self._compress)
 
         # write monitor
-        self._writer = writer
+        self._writer = writer if writer is not None else DefaultWriter(self._compress)
 
+        # check the same compression
+        if not isinstance(self._writer.compress, type(self._reader.compress)):
+            raise TypeError(
+                f"except the same compression class but got {self._reader.compress)} and {type(self._writer.compress)}")
         # server_count
         self._count = 0
         self._lock = RLock()
         self._sock = sock
-        self._address = (host or "127.0.0.1", port or 8001)
+        self._address = (host or "127.0.0.1", port or 8000)
         if self._sock is None:
             self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.bind(self._address)
 
     def __read(self, conn):
-        data = self._reader(conn=conn)
+        data, request = self._reader(conn=conn)  # type:ByteString,BaseRequest
         if data:
-            writer = partial(self.__write, send_data=data)
+            writer = partial(self.__write, send_data=data, request=request)
             self._selector.unregister(conn)
             try:
-                # 这里可以选择用lock来强一致, 但是会导致并发性能变差
+                # using lock make persistence would make more bad performance !!! u don't wanna see
                 self._selector.register(conn, selectors.EVENT_WRITE, writer)
             except KeyError:
-                pass
+                pass # FIXME: deal register conflict
         else:
-            # 非阻塞调用 或者 超时断开需要取消注册
+            # no-blocking-call or unknown timeout should unregister the event
             self._selector.unregister(conn)
 
     def __write(self, conn: socket.socket, send_data=None):
         with self._lock:
             self._count += 1
-            # 逻辑切入点
-            # a = 0
-            # for i in range(1000):
-            #     a += i
             print(f"number: {self._count} " + " ====  echo `", send_data, "`to", conn.getpeername())
 
             # TODO: 发送响应包优化
-            # FIXME: 优化后头协议如何处理 可以交给tstpq处理
-            # conn.send(self._compress.compress(data=send_data + EOF.encode("utf-8")))
+            # FIXME: 优化后头协议如何处理 可以交给tstp处理
             conn.send(send_data + EOF.encode("utf-8"))
             self._writer(conn, send_data)
             self._selector.unregister(conn)
-            self._selector.register(conn, selectors.EVENT_READ, self.__read)  # 重复依赖会有bug 的可能性
-            # conn.close()
+            # recursive dependence might occur something terrible
+            self._selector.register(conn, selectors.EVENT_READ, self.__read)
 
     def __accept(self, sock):
         conn, addr = sock.accept()
@@ -184,11 +97,6 @@ class Server:
         while True:
             events = self._selector.select()
             for key, mask in events:
-                # key : SelectorKey = namedtuple('SelectorKey', ['fileobj', 'fd', 'events', 'data'])
+                # ----  key : SelectorKey = namedtuple('SelectorKey', ['fileobj', 'fd', 'events', 'data'])
                 callback = key.data
                 callback(key.fileobj)
-
-
-if __name__ == '__main__':
-    server = Server(reader=DefaultReader(), writer=DefaultWriter(), port=8000)
-    server.run()

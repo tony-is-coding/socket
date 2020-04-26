@@ -46,7 +46,7 @@ class Crypto:
     @staticmethod
     def encrypt(data: ByteString) -> ByteString:
         pubkey = rsa.PublicKey.load_pkcs1_openssl_pem(pub_key())
-        # 公钥加密
+        # \\\
         crypt = rsa.encrypt(data, pubkey)
         return base64.b64encode(crypt)
 
