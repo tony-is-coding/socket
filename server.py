@@ -4,9 +4,9 @@ from functools import partial
 from threading import RLock
 from typing import ByteString
 
-from base import BaseWriter, BaseReader, BaseRequest
+from base import BaseWriter, BaseReader, BaseRequest, BaseHandler
 from compress import BaseCompress, default_compress
-from default import DefaultReader, DefaultWriter
+from default import DefaultReader, DefaultWriter, DefaultHandler
 
 EOF = "\r\n\r\n"
 
@@ -22,6 +22,7 @@ class Server:
     def __init__(self,
                  reader: BaseReader,
                  writer: BaseWriter,
+                 handler: BaseHandler,
                  compress: BaseCompress = default_compress,
                  selector=None,
                  port=None,
@@ -45,6 +46,10 @@ class Server:
         if not isinstance(self._writer.compress, type(self._reader.compress)):
             raise TypeError(
                 f"except the same compression class but got {self._reader.compress)} and {type(self._writer.compress)}")
+
+        # handler
+        self._handler = DefaultHandler()
+
         # server_count
         self._count = 0
         self._lock = RLock()
@@ -57,26 +62,23 @@ class Server:
     def __read(self, conn):
         data, request = self._reader(conn=conn)  # type:ByteString,BaseRequest
         if data:
-            writer = partial(self.__write, send_data=data, request=request)
+            writer = partial(self.__write, request=request)
             self._selector.unregister(conn)
             try:
                 # using lock make persistence would make more bad performance !!! u don't wanna see
                 self._selector.register(conn, selectors.EVENT_WRITE, writer)
             except KeyError:
-                pass # FIXME: deal register conflict
+                pass  # FIXME: deal register conflict
         else:
             # no-blocking-call or unknown timeout should unregister the event
             self._selector.unregister(conn)
 
-    def __write(self, conn: socket.socket, send_data=None):
+    def __write(self, conn: socket.socket, request):
         with self._lock:
             self._count += 1
-            print(f"number: {self._count} " + " ====  echo `", send_data, "`to", conn.getpeername())
-
             # TODO: 发送响应包优化
             # FIXME: 优化后头协议如何处理 可以交给tstp处理
-            conn.send(send_data + EOF.encode("utf-8"))
-            self._writer(conn, send_data)
+            self._writer(conn, request=request, handler=self._handler)
             self._selector.unregister(conn)
             # recursive dependence might occur something terrible
             self._selector.register(conn, selectors.EVENT_READ, self.__read)

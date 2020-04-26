@@ -3,7 +3,7 @@ from typing import ByteString, Tuple
 
 from base import BaseReader, BaseWriter, BaseRequest, BaseHandler, BaseResponse
 from compress import BaseCompress, default_compress
-from typevars import Header, Body, PyObject
+from typevars import Header, Body
 
 
 class DefaultRequest(BaseRequest):
@@ -32,15 +32,37 @@ class DefaultRequest(BaseRequest):
         self._body = body
 
     def append_body(self, tail: ByteString):
-        pass
+        self._body += tail
 
 
 class DefaultResponse(BaseResponse):
+
+    def __init__(self, header: Header = Header(content_length=0), body: Body = b''):
+        self._header = header
+        self._body = body
+
     def body(self) -> Body:
-        pass
+        return self._body
 
     def header(self) -> Header:
-        pass
+        return self._header
+
+    def set_header(self, **kwargs):
+        """
+        something useful for content parser and connect manage
+        - headers
+            -- content_length：body length
+        """
+        # TODO: extend header fields
+        cl = kwargs.get("content_length")
+        if cl is not None:
+            self._header.content_length = cl
+
+    def set_body(self, body: ByteString):
+        self._body = body
+
+    def append_body(self, tail: ByteString):
+        self._body += tail
 
 
 class DefaultReader(BaseReader):
@@ -85,12 +107,17 @@ class DefaultWriter(BaseWriter):
     def __init__(self, compress: BaseCompress = default_compress):
         self.compress = compress
 
-    def __call__(self, conn, request: BaseRequest, send_data=None):
-        # TODO: content zip
-        pass
+    def __call__(self, conn, handler: BaseHandler, request: BaseRequest):
+        resp = handler(request)
+        send_body = self.compress.compress(resp.body())  # type: bytes  # noqa
+        send_header = struct.pack("I", len(send_body))
+        conn.send(send_header + send_body)
 
 
 class DefaultHandler(BaseHandler):
 
-    def __call__(self, *args, **kwargs) -> ByteString:
-        pass
+    def __call__(self, request: BaseRequest) -> BaseResponse:
+        resp = DefaultResponse()
+        # TODO: handler data and response
+        resp.set_body(request.body())
+        return resp
