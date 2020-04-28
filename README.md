@@ -1,4 +1,8 @@
 ## Socket
+
+### TIP 
+> this branch is a new generation of socket, update I/O multiple module to  yield-based co-routine module
+
 Oh yeh! Is python !!!
 
 It is copy from https://github.com/lxzan/socket
